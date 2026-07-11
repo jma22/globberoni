@@ -99,9 +99,12 @@ class Archive(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author.bot:
+        if message.author.bot or message.channel.id != Archive.CHANNEL_ID:
             return
-        await message.delete()
+        try:
+            await message.delete()
+        except discord.NotFound:
+            pass
 
 
 class Notes(commands.Cog):
@@ -144,13 +147,16 @@ class Notes(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author.bot:
+        if message.author.bot or message.channel.id != Notes.CHANNEL_ID:
             return
-        await message.delete()
+        try:
+            await message.delete()
+        except discord.NotFound:
+            pass
 
     def archive_note(self, user_id, item):
         return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id)})"
-        
+
 
 class ExpenseObject(pydantic.BaseModel):
     expense: str
@@ -276,7 +282,7 @@ class Shopping(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author.bot:
+        if message.author.bot or message.channel.id != Shopping.CHANNEL_ID:
             return
         await message.delete()
 
