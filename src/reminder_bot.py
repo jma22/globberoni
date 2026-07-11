@@ -36,6 +36,13 @@ import pydantic
 from tinydb import TinyDB, Query
 from tinydb.storages import JSONStorage
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 SHOPPING_CHANNEL_ID = int(os.environ["SHOPPING_CHANNEL_ID"])
@@ -70,7 +77,7 @@ class GlobberoniBot(commands.Bot):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
-        print(f"Logged in as {self.user} — list ready.")
+        logger.info(f"Logged in as {self.user} — list ready.")
 
 
 
@@ -244,7 +251,7 @@ class Shopping(commands.Cog):
     @commands.hybrid_command(name="shop", description="Add item to the shopping list")
     @app_commands.describe(item="Item to add to the shopping list")
     async def shop(self, ctx: commands.Context, item: str):
-        print(f"Adding item to shopping list: {item}")
+        logger.info(f"Adding item to shopping list: {item}")
         sender = MEMBER_IDS.get(ctx.author.id).value
         msg = await self.channel.send(f"\U0001f4dd **{item}**")
         await msg.add_reaction(Shopping.DONE_EMOJI)
@@ -259,7 +266,7 @@ class Shopping(commands.Cog):
             return
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Shopping.DONE_EMOJI:
-            print("Reaction added to shopping item, removing it from the list.")
+            logger.info("Reaction added to shopping item, removing it from the list.")
             result = find_msg_exist(self.table, reacted_message_id)
             if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
@@ -286,12 +293,12 @@ def find_msg_exist(table, msg_id):
     return result is not None and not result.get("archived", False)
 
 def add_to_table(table, payload):
-    print(f"Adding to table {table.name}: {payload}")
+    logger.info(f"Adding to table {table.name}: {payload}")
     table.insert({**payload, "added_time": str(datetime.now())})
-    print(f"Table now has {len(table)} items.")
+    logger.info(f"Table now has {len(table)} items.")
 
 def set_archived_to_table(table, msg_id):
-    print(f"Setting archived for message ID {msg_id} in table {table.name}")
+    logger.info(f"Setting archived for message ID {msg_id} in table {table.name}")
     table.update({"archived": True}, Query().msg_id == msg_id)
 
 import asyncio
