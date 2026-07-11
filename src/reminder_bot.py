@@ -23,6 +23,7 @@ Setup:
      python reminder_bot.py
 """
 
+from datetime import datetime
 import os
 from unittest import case
 import discord
@@ -32,6 +33,9 @@ import asyncio
 import enum
 from typing import Literal
 import pydantic
+from tinydb import TinyDB, Query
+from tinydb.storages import JSONStorage
+
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 SHOPPING_CHANNEL_ID = int(os.environ["SHOPPING_CHANNEL_ID"])
@@ -57,51 +61,6 @@ MEMBER_IDS = {
 
 
 
-# ------------------------------------------------------------ in-memory state
-
-# message id -> item name. One live message per item, so this IS the list.
-# shopping_items: dict[int, str] = {}
-# todo_list: dict[int, str] = {}
-
-# def get_todo_list() -> list[str]:
-#     """Return the current to-do list as a list of item names."""
-#     return list(todo_list.values())
-
-# def has_item(name: str) -> bool:
-#     name = name.lower()
-#     return any(existing.lower() == name for existing in todo_list.values())
-
-
-# def parse_names(text: str) -> list[str]:
-#     return [p.strip() for p in text.split(",") if p.strip()]
-
-
-# ------------------------------------------------------------------ discord
-
-
-
-
-# async def add_names(channel, names):
-#     """Post one message per new item. Returns (added, dupes, skipped_full)."""
-#     added, dupes, skipped = [], [], 0
-#     for name in names:
-#         if has_item(name):
-#             dupes.append(name)
-#             continue
-#         if len(shopping_items) >= MAX_ITEMS:
-#             skipped += 1
-#             continue
-#         msg = await channel.send(f"\U0001f6d2 **{name}**")
-#         shopping_items[msg.id] = name
-#         added.append(name)
-#         # Pre-seed the check so buying it is always a single tap.
-#         try:
-#             await msg.add_reaction(BUY_EMOJI)
-#         except discord.HTTPException:
-#             pass
-#     return added, dupes, skipped
-
-
 class GlobberoniBot(commands.Bot):
     async def setup_hook(self) -> None:
         if GUILD_ID:
@@ -111,85 +70,15 @@ class GlobberoniBot(commands.Bot):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
-        print(f"Logged in as {bot.user} — list ready.")
+        print(f"Logged in as {self.user} — list ready.")
 
-# @bot.event
-# async def on_ready():
-#     if GUILD_ID:
-#         guild = discord.Object(id=GUILD_ID)
-#         # Copy globally-defined commands to the guild and sync — instant.
-#         bot.tree.copy_global_to(guild=guild)
-#         await bot.tree.sync(guild=guild)
-#     else:
-#         await bot.tree.sync()
-#     # State is in memory, so any surviving item messages are orphans.
-#     channel = bot.get_channel(SHOPPING_CHANNEL_ID)
-#     if channel is not None:
-#         await channel.purge(limit=50, check=lambda m: m.author == bot.user)
-#     print(f"Logged in as {bot.user} — list ready.")
-
-
-# @bot.event
-# async def on_message(message):
-#     """Any human message in #shopping = add items."""
-#     if message.author.bot:
-#         return
-#     if message.channel.id == SHOPPING_CHANNEL_ID:
-#         names = parse_names(message.content)
-#         try:
-#             await message.delete()
-#         except discord.HTTPException:
-#             pass
-#         _, _, skipped = await add_names(message.channel, names)
-#         if skipped:
-#             warn = await message.channel.send(
-#                 f"⚠️ List is full ({MAX_ITEMS} max) — {skipped} item(s) not added. "
-#                 f"Check some off with {BUY_EMOJI} first.")
-#             await warn.delete(delay=6)
-#         return
-#     await bot.process_commands(message)
-
-
-# @bot.event
-# async def on_raw_reaction_add(payload):
-#     if payload.user_id == bot.user.id or payload.channel_id != TODO_CHANNEL_ID:
-#         return
-#     if str(payload.emoji) != BUY_EMOJI or payload.message_id not in shopping_items:
-#         return
-
-#     del shopping_items[payload.message_id]
-#     channel = bot.get_channel(payload.channel_id)
-#     try:
-#         await channel.get_partial_message(payload.message_id).delete()
-#     except discord.HTTPException:
-#         pass
-
-
-# @bot.hybrid_command(name="shop", description="Add item(s) to the shopping list (comma-separated)")
-# @app_commands.describe(items="e.g. milk, eggs, hot sauce")
-# async def shop(ctx: commands.Context, *, items: str):
-#     channel = bot.get_channel(SHOPPING_CHANNEL_ID)
-#     if channel is None:
-#         await ctx.send("Can't reach the shopping channel.", ephemeral=True)
-#         return
-#     added, dupes, skipped = await add_names(channel, parse_names(items))
-#     if added:
-#         note = f"Added: {', '.join(added)}"
-#         if skipped:
-#             note += f" (list full — {skipped} skipped)"
-#     elif skipped:
-#         note = f"List is full ({MAX_ITEMS} max) — nothing added."
-#     elif dupes:
-#         note = "Already on the list."
-#     else:
-#         note = "Nothing to add."
-#     await ctx.send(note, ephemeral=True)
 
 
 class Archive(commands.Cog):
     CHANNEL_ID = int(os.environ["ARCHIVE_CHANNEL_ID"])
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # self.table = db.table("archive")
         self.channel = None
     
     @commands.Cog.listener()
@@ -198,7 +87,8 @@ class Archive(commands.Cog):
     
     @commands.Cog.listener()
     async def on_archive(self, message : str):
-        await self.channel.send(f"{message}")
+        msg = await self.channel.send(f"{message}")
+
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -206,12 +96,14 @@ class Archive(commands.Cog):
             return
         await message.delete()
 
+
 class Notes(commands.Cog):
     CHANNEL_ID = int(os.environ["TODO_CHANNEL_ID"])
     DONE_EMOJI = "✅"
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, db: TinyDB):
         self.bot = bot
-        self.todo_list: dict[int, str] = {}
+        self.table = db.table("notes")
+        # self.todo_list: dict[int, str] = {}
         self.channel = None
 
     @commands.Cog.listener()
@@ -222,10 +114,12 @@ class Notes(commands.Cog):
     @commands.hybrid_command(name="note", description="Add item to the note list")
     @app_commands.describe(reminder="book appointment, call mom, a code, an address etc.")
     async def note(self,ctx: commands.Context, reminder: str):
+        sender = MEMBER_IDS.get(ctx.author.id).value
         msg = await self.channel.send(f"\U0001f4dd **{reminder}**")
         await msg.add_reaction(Notes.DONE_EMOJI)
-        self.todo_list[msg.id] = reminder
-        await ctx.send(f"Added to note list: {reminder}", ephemeral=True)
+        payload = {"msg_id": msg.id, "content": reminder, "added_by": sender}
+        add_to_table(self.table, payload)
+        await ctx.send(f"{sender} added to note list: {reminder}", ephemeral=True)
 
 
     @commands.Cog.listener()
@@ -234,11 +128,12 @@ class Notes(commands.Cog):
             return
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Notes.DONE_EMOJI:
-            if reacted_message_id in self.todo_list:
+            result = self.table.get(Query().msg_id == reacted_message_id)
+            if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
-                item = self.todo_list.get(reacted_message_id)
+                item = result["content"]
                 self.bot.dispatch("archive", self.archive_note(payload.user_id, item))
-                del self.todo_list[reacted_message_id]
+                self.table.remove(Query().msg_id == reacted_message_id)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -254,6 +149,13 @@ class ExpenseObject(pydantic.BaseModel):
     expense: str
     amount: float
     fronter: Names
+
+    def to_dict(self):
+        return {
+            "expense": self.expense,
+            "amount": self.amount,
+            "fronter": self.fronter.value
+        }
     
 
 class Target(enum.Enum):
@@ -266,20 +168,28 @@ class Target(enum.Enum):
 class Expenses(commands.Cog):
     CHANNEL_ID = int(os.environ["EXPENSES_CHANNEL_ID"])
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, db: TinyDB):
         self.bot = bot
         self.channel = None
         self.expenses: dict[int, ExpenseObject] = {}
         self.pinned_message = None
+        self.table = db.table("expenses")
+        self.ledger = {Names.MANDY: 0, Names.JEMMY: 0}
 
     @commands.Cog.listener()
     async def on_ready(self):
         self.channel = self.bot.get_channel(Expenses.CHANNEL_ID)
         await self.channel.purge()
         ## create pinned message with total expenses
-        self.pinned_message = await self.channel.send("Total Expenses: $0.00")
+        self.pinned_message = None
+        await self.init_ledger()
+
+    async def init_ledger(self):
+        expenses = self.table.all()
+        for expense in expenses:
+            self.ledger[Names(expense["fronter"])] += expense["amount"]
+        self.pinned_message = await self.channel.send(self.info_msg())
         await self.pinned_message.pin()
-        await self.maintain_pinned_msg()
     
     @commands.hybrid_command(name="spend", description="Add item to the expense list")
     @app_commands.describe(expense="expense description", amount="amount spent", fronted_by = "who paid, default to the command invoker", for_who="For whom the expense is for (both, them, me). Default is me.")
@@ -298,20 +208,17 @@ class Expenses(commands.Cog):
         msg = await self.channel.send(f"\U0001f4b0 **{expense}** - ${amount:.2f} (fronted by {fronted_by.value}) for {for_who_name}")
         await ctx.send(f"Added to expense list: {expense} - ${amount:.2f}", ephemeral=True)
         # msg.add_reaction(Notes.DONE_EMOJI)
-        self.expenses[msg.id] = expense_obj
-        await self.maintain_pinned_msg()
-    
-
-    async def maintain_pinned_msg(self):
-        spending = {Names.MANDY: 0, Names.JEMMY: 0}
-        for expense in self.expenses.values():
-            spending[expense.fronter] += expense.amount
+        # self.expenses[msg.id] = expense_obj
+        payload = {"msg_id": msg.id, **expense_obj.to_dict(), "for_who": for_who_name}
+        add_to_table(self.table, payload)
+        self.update_ledger(expense_obj, for_who)
         await self.pinned_message.edit(content=self.info_msg())
-    
+        
+    def update_ledger(self, expense_obj: ExpenseObject, for_who: Target):
+        self.ledger[expense_obj.fronter] += expense_obj.amount
+
     def info_msg(self):
-        spending = {Names.MANDY: 0, Names.JEMMY: 0}
-        for expense in self.expenses.values():
-            spending[expense.fronter] += expense.amount
+        spending = self.ledger
         return f"Mandy: ${spending[Names.MANDY]:.2f}, Jemmy: ${spending[Names.JEMMY]:.2f})"
         
     
@@ -319,16 +226,69 @@ class Expenses(commands.Cog):
 class Reminders(commands.Cog):
     pass
 
+
 class Shopping(commands.Cog):
-    pass
+    CHANNEL_ID = int(os.environ["SHOPPING_CHANNEL_ID"])
+    DONE_EMOJI = "✅"
+    def __init__(self, bot: commands.Bot, db: TinyDB):
+        self.bot = bot
+        self.table = db.table("shopping")
+        # self.todo_list: dict[int, str] = {}
+        self.channel = None
 
-## helpers
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.channel = self.bot.get_channel(Shopping.CHANNEL_ID)
+        await self.channel.purge()
+    
+    @commands.hybrid_command(name="shop", description="Add item to the shopping list")
+    @app_commands.describe(item="Item to add to the shopping list")
+    async def shop(self, ctx: commands.Context, item: str):
+        print(f"Adding item to shopping list: {item}")
+        sender = MEMBER_IDS.get(ctx.author.id).value
+        msg = await self.channel.send(f"\U0001f4dd **{item}**")
+        await msg.add_reaction(Shopping.DONE_EMOJI)
+        payload = {"msg_id": msg.id, "content": item, "added_by": sender}
+        add_to_table(self.table, payload)
+        await ctx.send(f"{sender} added to SHOPPING list: {item}", ephemeral=True)
 
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload):
+        if payload.user_id == self.bot.user.id:
+            return
+        reacted_message_id = payload.message_id
+        if str(payload.emoji) == Shopping.DONE_EMOJI:
+            result = self.table.get(Query().msg_id == reacted_message_id)
+            if result:
+                await self.channel.get_partial_message(reacted_message_id).delete()
+                item = result["content"]
+                self.bot.dispatch("archive", self.archive_note(payload.user_id, item))
+                self.table.remove(Query().msg_id == reacted_message_id)
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot:
+            return
+        await message.delete()
+
+    def archive_note(self, user_id, item):
+        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id)})"
+
+    # def sync(self):
+
+
+
+def add_to_table(table, payload):
+    table.insert({**payload, "added_time": str(datetime.datetime.now())})
 
 
 import asyncio
 
 if __name__ == "__main__":
+
+    db = TinyDB('db/db.json', storage=JSONStorage, indent=2)
+
     intents = discord.Intents.default()
     intents.message_content = True
 
@@ -340,8 +300,9 @@ if __name__ == "__main__":
     
     async def main():
         await bot.add_cog(Archive(bot))
-        await bot.add_cog(Notes(bot))
-        await bot.add_cog(Expenses(bot))
+        await bot.add_cog(Notes(bot, db))
+        await bot.add_cog(Expenses(bot, db))
+        await bot.add_cog(Shopping(bot, db))
         await bot.start(DISCORD_TOKEN)
 
     asyncio.run(main())

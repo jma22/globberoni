@@ -1,2 +1,2 @@
 #!/bin/zsh
-uv run --env-file .env reminder_bot.py
+uv run --env-file .env src/reminder_bot.py
