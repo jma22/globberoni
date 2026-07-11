@@ -128,12 +128,12 @@ class Notes(commands.Cog):
             return
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Notes.DONE_EMOJI:
-            result = self.table.get(Query().msg_id == reacted_message_id)
+            result = find_msg_exist(self.table, reacted_message_id)
             if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
                 item = result["content"]
                 self.bot.dispatch("archive", self.archive_note(payload.user_id, item))
-                self.table.remove(Query().msg_id == reacted_message_id)
+                set_archived_to_table(self.table, reacted_message_id)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -260,12 +260,12 @@ class Shopping(commands.Cog):
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Shopping.DONE_EMOJI:
             print("Reaction added to shopping item, removing it from the list.")
-            result = self.table.get(Query().msg_id == reacted_message_id)
+            result = find_msg_exist(self.table, reacted_message_id)
             if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
                 item = result["content"]
                 self.bot.dispatch("archive", self.archive_note(payload.user_id, item))
-                self.table.remove(Query().msg_id == reacted_message_id)
+                set_archived_to_table(self.table, reacted_message_id)   
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -280,11 +280,19 @@ class Shopping(commands.Cog):
 
 
 
+def find_msg_exist(table, msg_id):
+    ## check if not archived
+    result = table.get(Query().msg_id == msg_id)
+    return result is not None and not result.get("archived", False)
+
 def add_to_table(table, payload):
     print(f"Adding to table {table.name}: {payload}")
     table.insert({**payload, "added_time": str(datetime.now())})
     print(f"Table now has {len(table)} items.")
 
+def set_archived_to_table(table, msg_id):
+    print(f"Setting archived for message ID {msg_id} in table {table.name}")
+    table.update({"archived": True}, Query().msg_id == msg_id)
 
 import asyncio
 
