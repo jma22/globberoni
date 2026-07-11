@@ -259,6 +259,7 @@ class Shopping(commands.Cog):
             return
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Shopping.DONE_EMOJI:
+            print("Reaction added to shopping item, removing it from the list.")
             result = self.table.get(Query().msg_id == reacted_message_id)
             if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
