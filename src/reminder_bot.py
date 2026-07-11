@@ -281,8 +281,8 @@ class Shopping(commands.Cog):
 
 
 def add_to_table(table, payload):
-    print(f"Adding to table: {payload}")
-    table.insert({**payload, "added_time": str(datetime.datetime.now())})
+    print(f"Adding to table {table.name}: {payload}")
+    table.insert({**payload, "added_time": str(datetime.now())})
     print(f"Table now has {len(table)} items.")
 
 
