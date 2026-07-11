@@ -135,7 +135,7 @@ class Notes(commands.Cog):
             return
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Notes.DONE_EMOJI:
-            result = find_msg_exist(self.table, reacted_message_id)
+            result = find_msg_if_exist(self.table, reacted_message_id)
             if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
                 item = result["content"]
@@ -267,7 +267,7 @@ class Shopping(commands.Cog):
         reacted_message_id = payload.message_id
         if str(payload.emoji) == Shopping.DONE_EMOJI:
             logger.info("Reaction added to shopping item, removing it from the list.")
-            result = find_msg_exist(self.table, reacted_message_id)
+            result = find_msg_if_exist(self.table, reacted_message_id)
             if result:
                 await self.channel.get_partial_message(reacted_message_id).delete()
                 item = result["content"]
@@ -287,10 +287,14 @@ class Shopping(commands.Cog):
 
 
 
-def find_msg_exist(table, msg_id):
+def find_msg_if_exist(table, msg_id):
     ## check if not archived
     result = table.get(Query().msg_id == msg_id)
-    return result is not None and not result.get("archived", False)
+    if result and not result.get("archived", False):
+        return result
+    return None
+
+
 
 def add_to_table(table, payload):
     logger.info(f"Adding to table {table.name}: {payload}")
