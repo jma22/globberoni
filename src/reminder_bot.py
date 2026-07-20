@@ -1,14 +1,12 @@
 """
-Shopping list bot for a locked #shopping channel — in-memory edition.
+Shopping list bot for a locked #shopping channel.
 
 How it works:
   - Every item on the list is its own message in #shopping.
-  - Type item names (comma-separated) in #shopping to add them; your
+  - Type item names in #shopping to add them; your
     message is deleted right away so the channel stays clean.
   - React ✅ on an item to buy it — the message disappears.
-  - /shop <items> works from ANY channel for quick adds.
-
-NOTE: state lives in memory — restarting the bot clears the list.
+  - /shop <item> works from ANY channel for quick adds.
 
 Setup:
   1. pip install -U discord.py
@@ -25,7 +23,6 @@ Setup:
 
 from datetime import datetime, time
 import os
-from unittest import case
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -62,7 +59,7 @@ class Names(enum.Enum):
 
     
 MEMBER_IDS = {
-    656615789658636320 : Names.MANDY,
+    656615789658636320: Names.MANDY,
     168127023900917760: Names.JEMMY
 }
 
@@ -155,7 +152,7 @@ class Notes(commands.Cog):
             pass
 
     def archive_note(self, user_id, item):
-        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id)})"
+        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id).value})"
 
 
 class ExpenseObject(pydantic.BaseModel):
@@ -175,7 +172,6 @@ class Target(enum.Enum):
     BOTH = "both"
     THEM = "them"
     ME = "me"
-
 
 
 class Expenses(commands.Cog):
@@ -235,7 +231,6 @@ class Expenses(commands.Cog):
         return f"Mandy: ${spending[Names.MANDY]:.2f}, Jemmy: ${spending[Names.JEMMY]:.2f})"
         
     
-
 class Reminders(commands.Cog):
     pass
 
@@ -353,7 +348,7 @@ class Shopping(commands.Cog):
         await message.delete()
 
     def archive_note(self, user_id, item):
-        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id)})"
+        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id).value})"
 
     # def sync(self):
 
