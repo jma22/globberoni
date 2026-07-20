@@ -1,14 +1,12 @@
 """
-Shopping list bot for a locked #shopping channel — in-memory edition.
+Shopping list bot for a locked #shopping channel.
 
 How it works:
   - Every item on the list is its own message in #shopping.
-  - Type item names (comma-separated) in #shopping to add them; your
+  - Type item names in #shopping to add them; your
     message is deleted right away so the channel stays clean.
   - React ✅ on an item to buy it — the message disappears.
-  - /shop <items> works from ANY channel for quick adds.
-
-NOTE: state lives in memory — restarting the bot clears the list.
+  - /shop <item> works from ANY channel for quick adds.
 
 Setup:
   1. pip install -U discord.py
@@ -23,11 +21,10 @@ Setup:
      python reminder_bot.py
 """
 
-from datetime import datetime
+from datetime import datetime, time
 import os
-from unittest import case
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import enum
@@ -62,7 +59,7 @@ class Names(enum.Enum):
 
     
 MEMBER_IDS = {
-    656615789658636320 : Names.MANDY,
+    656615789658636320: Names.MANDY,
     168127023900917760: Names.JEMMY
 }
 
@@ -155,7 +152,7 @@ class Notes(commands.Cog):
             pass
 
     def archive_note(self, user_id, item):
-        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id)})"
+        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id).value})"
 
 
 class ExpenseObject(pydantic.BaseModel):
@@ -175,7 +172,6 @@ class Target(enum.Enum):
     BOTH = "both"
     THEM = "them"
     ME = "me"
-
 
 
 class Expenses(commands.Cog):
@@ -235,9 +231,29 @@ class Expenses(commands.Cog):
         return f"Mandy: ${spending[Names.MANDY]:.2f}, Jemmy: ${spending[Names.JEMMY]:.2f})"
         
     
-
 class Reminders(commands.Cog):
     pass
+
+
+class DayOfWeek(enum.Enum):
+    MONDAY = "Monday"
+    TUESDAY = "Tuesday"
+    WEDNESDAY = "Wednesday"
+    THURSDAY = "Thursday"
+    FRIDAY = "Friday"
+    SATURDAY = "Saturday"
+    SUNDAY = "Sunday"
+
+    @classmethod
+    def today(cls):
+        # datetime.weekday(): Monday == 0 ... Sunday == 6, matching enum order.
+        return list(cls)[datetime.now().weekday()]
+
+    @classmethod
+    def parse(cls, value):
+        # Accepts any case + prefix, e.g. "Monday", "monday", "mon".
+        v = value.strip().lower()
+        return next((d for d in cls if d.value.lower().startswith(v)), cls.MONDAY)
 
 
 class Shopping(commands.Cog):
@@ -246,6 +262,7 @@ class Shopping(commands.Cog):
     def __init__(self, bot: commands.Bot, db: TinyDB):
         self.bot = bot
         self.table = db.table("shopping")
+        self.recurring_table = db.table("shopping_recurring")
         # self.todo_list: dict[int, str] = {}
         self.channel = None
 
@@ -253,17 +270,61 @@ class Shopping(commands.Cog):
     async def on_ready(self):
         self.channel = self.bot.get_channel(Shopping.CHANNEL_ID)
         await self.channel.purge()
-    
+        if not self.readd_recurring.is_running():
+            self.readd_recurring.start()
+
+    async def cog_unload(self):
+        self.readd_recurring.cancel()
+
     @commands.hybrid_command(name="shop", description="Add item to the shopping list")
-    @app_commands.describe(item="Item to add to the shopping list")
-    async def shop(self, ctx: commands.Context, item: str):
-        logger.info(f"Adding item to shopping list: {item}")
+    @app_commands.describe(
+        item="Item to add to the shopping list",
+        recurring="Re-add this item automatically every week",
+        day="Day of week to re-add a recurring item (default Monday)",
+    )
+    async def shop(self, ctx: commands.Context, item: str, recurring: bool = False, day: str = "Monday"):
+        day = DayOfWeek.parse(day)
+        logger.info(f"Adding item to shopping list: {item} (recurring={recurring}, day={day.value})")
         sender = MEMBER_IDS.get(ctx.author.id).value
         msg = await self.channel.send(f"\U0001f4dd **{item}**")
         await msg.add_reaction(Shopping.DONE_EMOJI)
-        payload = {"msg_id": msg.id, "content": item, "added_by": sender}
+        payload = {"msg_id": msg.id, "content": item, "added_by": sender,
+                   "recurring": recurring, "recur_day": day.value if recurring else None}
         add_to_table(self.table, payload)
-        await ctx.send(f"{sender} added to SHOPPING list: {item}", ephemeral=True)
+        if recurring:
+            if not self.recurring_table.contains((Query().content == item) & (Query().recur_day == day.value)):
+                self.recurring_table.insert({
+                    "content": item,
+                    "recur_day": day.value,
+                    "added_by": sender,
+                    "last_added": str(datetime.now().date()) if day == DayOfWeek.today() else None,
+                })
+            await ctx.send(f"{sender} added to SHOPPING list: {item}, recurring every {day.value}", ephemeral=True)
+        else:
+            await ctx.send(f"{sender} added to SHOPPING list: {item}", ephemeral=True)
+
+    @tasks.loop(time=time(hour=9))
+    async def readd_recurring(self):
+        today = DayOfWeek.today()
+        today_str = str(datetime.now().date())
+        logger.info(f"Checking recurring shopping items for {today.value}")
+        for template in self.recurring_table.search(Query().recur_day == today.value):
+            if template.get("last_added") == today_str:
+                continue
+            msg = await self.channel.send(f"\U0001f4dd **{template['content']}**")
+            await msg.add_reaction(Shopping.DONE_EMOJI)
+            add_to_table(self.table, {
+                "msg_id": msg.id,
+                "content": template["content"],
+                "added_by": template["added_by"],
+                "recurring": True,
+                "recur_day": template["recur_day"],
+            })
+            self.recurring_table.update({"last_added": today_str}, doc_ids=[template.doc_id])
+
+    @readd_recurring.before_loop
+    async def before_readd_recurring(self):
+        await self.bot.wait_until_ready()
 
 
     @commands.Cog.listener()
@@ -287,7 +348,7 @@ class Shopping(commands.Cog):
         await message.delete()
 
     def archive_note(self, user_id, item):
-        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id)})"
+        return f"**Note:** {item} (removed by {MEMBER_IDS.get(user_id).value})"
 
     # def sync(self):
 
