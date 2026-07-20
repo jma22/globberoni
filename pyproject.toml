@@ -1,7 +1,7 @@
 [project]
 name = "discord-bots"
 version = "0.1.0"
-description = "Add your description here"
+description = "discord bot for mandy and jemmy to track things!"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
